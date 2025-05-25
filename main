@@ -1,0 +1,103 @@
+const int LIGHT_PIN = A0;           // Pin connected to voltage divider output
+const int R1signal_PIN = 10;        // Relay for Battery 1 control
+const int R2signal_PIN = 11;        // Relay for Battery 2 control 
+
+// Measured component values:
+const float VCC = 4.98;             // Measured voltage of Arduino 5V line
+const float R_DIV = 4660.0;         // Measured resistance of the fixed resistor
+
+// Thresholds for light/darkness (photocell resistance):
+// CALIBRATE THESE VALUES FOR YOUR SETUP!
+const float DARK_THRESHOLD = 10000.0; // Resistance when it's considered dark
+const float LIGHT_THRESHOLD = 2500.0; // Resistance when it's considered light
+
+// Delay durations in milliseconds:
+const unsigned long DELAY_DURATION = 30000; // 30 seconds
+
+// State variables for darkness detection
+unsigned long darkStartTime = 0;
+bool isCurrentlyDark = false; // Tracks if we are currently in the "dark" state (after delay)
+
+// State variables for lightness detection
+unsigned long lightStartTime = 0;
+bool isCurrentlyLight = false; // Tracks if we are currently in the "light" state (after delay)
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LIGHT_PIN, INPUT);
+  pinMode(R1signal_PIN, OUTPUT);
+  pinMode(R2signal_PIN, OUTPUT);
+
+  // Ensure relays are in a known OFF state at startup
+  // Assuming LOW keeps the relay off/power ON to the battery
+  digitalWrite(R1signal_PIN, LOW);
+  digitalWrite(R2signal_PIN, LOW);
+}
+
+void loop() {
+  int lightADC = analogRead(LIGHT_PIN);
+  if (lightADC > 0) { // Ensure a valid reading
+    float lightV = lightADC * VCC / 1023.0;
+    float lightR = R_DIV * (VCC / lightV - 1.0);
+    Serial.print("Voltage: " + String(lightV) + " V, Resistance: " + String(lightR) + " ohms");
+
+    // --- DARKNESS LOGIC ---
+    if (lightR >= DARK_THRESHOLD) {
+      // If it's dark and we haven't started counting, or the count was reset
+      if (!isCurrentlyDark && darkStartTime == 0) {
+        darkStartTime = millis(); // Start/restart the dark timer
+        Serial.println(" - Dark detected! Starting delay for Battery 1 OFF.");
+      } else if (!isCurrentlyDark && (millis() - darkStartTime >= DELAY_DURATION)) {
+        // If delay passed and we're not yet in the 'isCurrentlyDark' state
+        digitalWrite(R1signal_PIN, HIGH); // Assuming HIGH cuts power to Battery 1
+        isCurrentlyDark = true;
+        isCurrentlyLight = false; // Exit light state if we were in it
+        digitalWrite(R2signal_PIN, LOW); // Ensure Relay 2 is off/Battery 2 is on when it's dark
+        Serial.println(" - Confirmed dark. Battery 1 OFF.");
+      } else if (isCurrentlyDark) {
+         Serial.println(" - Still dark. Battery 1 remains OFF.");
+      } else { // Still waiting for delay
+        Serial.println(" - Dark detected, counting down...");
+      }
+      // If light conditions are met, reset light timer
+      lightStartTime = 0; // Reset light timer if it's currently dark
+    }
+    // --- LIGHTNESS LOGIC ---
+    else if (lightR <= LIGHT_THRESHOLD) { // Using <= for light threshold
+      // If it's light and we haven't started counting, or the count was reset
+      if (!isCurrentlyLight && lightStartTime == 0) {
+        lightStartTime = millis(); // Start/restart the light timer
+        Serial.println(" - Light detected! Starting delay for Battery 2 OFF.");
+      } else if (!isCurrentlyLight && (millis() - lightStartTime >= DELAY_DURATION)) {
+        // If delay passed and we're not yet in the 'isCurrentlyLight' state
+        digitalWrite(R2signal_PIN, HIGH); // Assuming HIGH cuts power to Battery 2
+        isCurrentlyLight = true;
+        isCurrentlyDark = false; // Exit dark state if we were in it
+        digitalWrite(R1signal_PIN, LOW); // Ensure Relay 1 is off/Battery 1 is on when it's light
+        Serial.println(" - Confirmed light. Battery 2 OFF.");
+      } else if (isCurrentlyLight) {
+         Serial.println(" - Still light. Battery 2 remains OFF.");
+      } else { // Still waiting for delay
+        Serial.println(" - Light detected, counting down...");
+      }
+      // If dark conditions are met, reset dark timer
+      darkStartTime = 0; // Reset dark timer if it's currently light
+    }
+    // --- AMBIENT/IN-BETWEEN STATE (neither dark nor light thresholds met) ---
+    else {
+      // Reset timers if we are in an "in-between" state
+      if (darkStartTime != 0 || lightStartTime != 0 || isCurrentlyDark || isCurrentlyLight) {
+          Serial.println(" - Ambient light detected. Resetting timers/states.");
+      }
+      darkStartTime = 0;
+      lightStartTime = 0;
+      isCurrentlyDark = false;
+      isCurrentlyLight = false;
+      digitalWrite(R1signal_PIN, LOW); // Ensure Battery 1 is ON
+      digitalWrite(R2signal_PIN, LOW); // Ensure Battery 2 is ON
+    }
+
+    Serial.println(); // New line for readability
+  }
+  delay(500); // Small delay to prevent excessive readings
+}
